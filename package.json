@@ -1,0 +1,38 @@
+{
+  "name": "spire",
+  "version": "0.0.0",
+  "description": "Library & script for talking to an Espruino",
+  "main": "lib/espruino.js",
+  "homepage": "https://github.com/boneskull/spire",
+  "scripts": {
+    "test": "grunt test"
+  },
+  "author": "Christopher Hiller <chiller@badwing.com>",
+  "license": "MIT",
+  "dependencies": {
+    "bluebird": "^2.9.12",
+    "browserify": "^9.0.3",
+    "chalk": "^1.0.0",
+    "inquirer": "^0.8.0",
+    "lodash": "^3.3.1",
+    "serialport": "^1.5.0",
+    "string": "^3.0.0",
+    "tarballify": "^0.2.1",
+    "through2": "^1.1.1",
+    "uglifyify": "^3.0.1",
+    "winston": "^0.9.0",
+    "yargs": "^3.3.1"
+  },
+  "bin": {
+    "spire": "bin/spire.js"
+  },
+  "devDependencies": {
+    "grunt": "^0.4.5",
+    "grunt-dev-update": "^1.1.0",
+    "grunt-eslint": "^7.0.1",
+    "grunt-mocha-cov": "^0.3.0",
+    "jit-grunt": "^0.9.1",
+    "load-grunt-config": "^0.16.0",
+    "time-grunt": "^1.1.0"
+  }
+}
