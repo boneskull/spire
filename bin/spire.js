@@ -6,75 +6,75 @@ var yargs = require('yargs'),
   inquirer = require('inquirer'),
   _ = require('lodash'),
   Promise = require('bluebird'),
-  winston = require('winston'),
-  chalk = require('chalk'),
-  path = require('path'),
   serialPort = require('serialport'),
 
-  Espruino = require('../lib/espruino');
+  spire = require('..');
 
 var promptForPort,
   parseArgs,
   upload,
   main,
-  configureLogger;
+  guessPort,
+
+  Espruino = spire.Espruino,
+  logger = spire.logger,
+
+  log;
 
 Promise.longStackTraces();
 
-configureLogger = function configureLogger(argv) {
-  var log,
-    logLevel,
-    logConfig;
-
-  if (argv.debug) {
-    logLevel = 'debug';
-  } else if (argv.verbose) {
-    logLevel = 'verbose';
-  } else {
-    logLevel = 'info';
-  }
-
-  logConfig = {
-    transports: [
-      new winston.transports.Console({
-        level: logLevel,
-        colorize: argv.color && 'all',
-        handleExceptions: true,
-        showLevel: false,
-        prettyPrint: true
-      })
-    ]
-  };
-
-  if (argv.debug) {
-    logConfig.transports.push(new winston.transports.File({
-      filename: path.join(process.cwd(), 'spire-debug.log'),
-      level: logLevel,
-      timestamp: true,
-      handleExceptions: true
-    }));
-  }
-
-  log = winston.loggers.add('spire', logConfig);
-  //log.setLevels(LEVELS);
-  //_.find(log.transports, {name: 'console']}).showLevel = false;
-
-  return log;
-}
+guessPort = function guessPort(ports) {
+  return _.find(ports, {
+    manufacturer: 'STMicroelectronics'
+  });
+};
 
 promptForPort = function promptForPort(ports) {
-  return new Promise(function (resolve) {
-    inquirer.prompt([{
-      type: 'list',
-      name: 'port',
-      message: 'Please choose the Espruino\'s serial port.',
-      choices: _.map(ports, 'comName'),
-      'default': _.find(ports, {manufacturer: 'STMicroelectronics'}).comName
-    }], function (answers) {
-      resolve(answers);
+  var NONE = 'none',
+    RESCAN = 'rescan';
+
+  if (!process.stdout.isTTY) {
+    return Promise.reject('Could not find Espruino');
+  }
+  return (function _promptForPort(ports) {
+    var defaultPort;
+
+    defaultPort = guessPort(ports);
+    return new Promise(function (resolve, reject) {
+      inquirer.prompt({
+        type: 'list',
+        name: 'port',
+        message: 'Please choose the Espruino\'s serial port.',
+        choices: _.map(ports, 'comName').concat({
+          name: '(None of these; exit)',
+          value: NONE
+        }, {
+          name: '(Rescan serial ports)',
+          value: RESCAN
+        }),
+        'default': defaultPort && defaultPort.comName
+      }, function (answers) {
+        switch (answers.port) {
+          case NONE:
+            return reject('Could not find Espruino');
+          case RESCAN:
+            serialPort.list(function (err, ports) {
+              if (err) {
+                return reject(new Error(err));
+              }
+              log.debug('Found serial ports:', ports);
+              _promptForPort(ports)
+                .then(resolve, reject);
+            });
+            break;
+          default:
+            return resolve(answers.port);
+        }
+
+      });
     });
-  })
-    .get('port');
+  }(ports));
+
 };
 
 parseArgs = function parseArgs() {
@@ -107,13 +107,8 @@ parseArgs = function parseArgs() {
     .help('help')
     .alias('help', 'h')
     .epilogue('See https://github.com/boneskull/spire')
-    .check(function (argv) {
-      argv.color = argv.c = argv.color && chalk.supportsColor;
-      return true;
-    })
     .argv;
 };
-
 
 upload = function upload(port, file) {
   var esp = new Espruino(port);
@@ -125,15 +120,19 @@ upload = function upload(port, file) {
 main = function main() {
   var argv = parseArgs(),
     filepath = _.first(argv._),
-    port = argv.port,
-    log;
+    port = argv.port;
 
-  log = configureLogger(argv);
+  argv.cli = true;
+  log = logger(argv);
+
   log.debug('Received arguments:', argv);
   log.verbose('Querying serial ports');
 
   serialPort.list(function (err, ports) {
-    var ok = true;
+    var ok = true,
+      portObj,
+      portNames;
+
     if (err) {
       throw new Error(err);
     }
@@ -141,14 +140,29 @@ main = function main() {
     log.debug('Found serial ports:', ports);
 
     if (!port) {
-      ok = false;
-    } else if (port && !_(ports).map('comName').contains(port)) {
-      log.warn('Unknown serial port "%s"', port);
-      ok = false;
+      portObj = guessPort(ports);
+      if (!portObj) {
+        log.info('Could not auto-detect Espruino');
+        ok = false;
+      } else {
+        port = portObj.comName;
+        log.info('Auto-detected Espruino on port "%s"', port);
+      }
+    } else if (port &&
+      !_.contains((portNames = _.pluck(ports, 'comName')), port)) {
+      port = port.replace(/tty\./, 'cu.');
+      if (!_.contains(portNames, port)) {
+        log.warn('Unknown serial port "%s"', port);
+        ok = false;
+      }
     }
 
-
-    (!ok ? promptForPort(ports) : Promise.resolve(port))
+    Promise.resolve(function () {
+      if (!ok) {
+        return promptForPort(ports);
+      }
+      return Promise.resolve(port);
+    }())
       .then(function (port) {
         return upload(port, filepath);
       })
