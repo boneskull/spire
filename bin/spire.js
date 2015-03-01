@@ -10,24 +10,17 @@ var yargs = require('yargs'),
 
   spire = require('..');
 
-var promptForPort,
-  parseArgs,
-  upload,
+var parseArgs,
   main,
-  guessPort,
+  promptForPort,
 
-  Espruino = spire.Espruino,
   logger = spire.logger,
+  commands = spire.commands,
+  Espruino = spire.Espruino,
 
   log;
 
 Promise.longStackTraces();
-
-guessPort = function guessPort(ports) {
-  return _.find(ports, {
-    manufacturer: 'STMicroelectronics'
-  });
-};
 
 promptForPort = function promptForPort(ports) {
   var NONE = 'none',
@@ -78,98 +71,108 @@ promptForPort = function promptForPort(ports) {
 };
 
 parseArgs = function parseArgs() {
-  return yargs
-    .usage('$0 --port <port> <file.js>')
-    .options({
-      port: {
-        alias: 'p',
-        string: true,
-        describe: 'Espruino\'s serial port'
-      },
-      color: {
-        alias: 'c',
-        'boolean': true,
-        describe: 'Display output in color (if available)',
-        'default': true
-      },
-      verbose: {
-        alias: 'v',
-        'boolean': true,
-        describe: 'Verbose output'
-      },
-      debug: {
-        'boolean': true,
-        describe: 'Debug-level output'
-      }
-    })
-    .demand(1)
-    .version('version')
-    .help('help')
-    .alias('help', 'h')
-    .epilogue('See https://github.com/boneskull/spire')
+  var globalArgs = yargs
+      .usage('$0 <command> [--port <port>] [--baudrate <baudrate>] ' +
+      '[--no-color] [--no-autodetect] [--verbose] [--debug]')
+      .command('upload', 'Upload a script to Espruino')
+      .options({
+        port: {
+          alias: 'p',
+          string: true,
+          describe: 'Espruino\'s serial port'
+        },
+        color: {
+          'boolean': true,
+          describe: 'Display output in color (if available)',
+          'default': true
+        },
+        verbose: {
+          alias: 'v',
+          'boolean': true,
+          describe: 'Verbose output'
+        },
+        debug: {
+          'boolean': true,
+          describe: 'Debug-level output'
+        },
+        autodetect: {
+          'boolean': true,
+          describe: 'Auto-detect Espruino port (STM32 chip)',
+          'default': true
+        },
+        baudrate: {
+          alias: 'b',
+          describe: 'Communication baud rate',
+          'default': 9600
+        }
+      })
+      .demand(1)
+      .version('version')
+      .help('help')
+      .alias('help', 'h')
+      .epilogue('Fork me on GitHub: https://github.com/boneskull/spire')
+      .check(function (argv) {
+        if (!_.contains(argv._[0], _.keys(commands))) {
+          throw new Error('Unknown command');
+        }
+        return true;
+      })
+      .argv,
+    cmd = globalArgs._[0],
+    cmdArgs,
+    command = commands[cmd];
+
+  cmdArgs = yargs.reset()
+    .usage(command.usage)
+    .demand(1 + (command.demand || 0))
+    .options(command.options)
     .argv;
-};
 
-upload = function upload(port, file) {
-  var esp = new Espruino(port);
-
-  esp.upload(file);
-
+  return {
+    opts: _.extend(globalArgs, cmdArgs),
+    command: command
+  };
 };
 
 main = function main() {
-  var argv = parseArgs(),
-    filepath = _.first(argv._),
-    port = argv.port;
+  var data = parseArgs(),
+    opts = data.opts,
+    command = data.command,
+    espruino;
 
-  argv.cli = true;
-  log = logger(argv);
-
-  log.debug('Received arguments:', argv);
+  log = logger(_.extend({}, opts, {
+    cli: true
+  }));
+  log.debug('Received arguments:', opts);
   log.verbose('Querying serial ports');
 
-  serialPort.list(function (err, ports) {
-    var ok = true,
-      portObj,
-      portNames;
-
-    if (err) {
-      throw new Error(err);
-    }
-
-    log.debug('Found serial ports:', ports);
-
-    if (!port) {
-      portObj = guessPort(ports);
-      if (!portObj) {
-        log.info('Could not auto-detect Espruino');
-        ok = false;
-      } else {
-        port = portObj.comName;
-        log.info('Auto-detected Espruino on port "%s"', port);
-      }
-    } else if (port &&
-      !_.contains((portNames = _.pluck(ports, 'comName')), port)) {
-      port = port.replace(/tty\./, 'cu.');
-      if (!_.contains(portNames, port)) {
-        log.warn('Unknown serial port "%s"', port);
-        ok = false;
-      }
-    }
-
-    Promise.resolve(function () {
-      if (!ok) {
-        return promptForPort(ports);
-      }
-      return Promise.resolve(port);
-    }())
-      .then(function (port) {
-        return upload(port, filepath);
-      })
-      .catch(function (err) {
-        log.error(err);
+  Espruino.findPort(opts.port, opts.autodetect)
+    .then(function (data) {
+      var port = data.port;
+      _.each(data.log, function (msg, func) {
+        log[func](msg);
       });
-  });
+      if (!port) {
+        return promptForPort(data.ports);
+      }
+      return port;
+    })
+    .then(function (port) {
+      _.extend(opts, {
+        port: port
+      });
+      espruino = new Espruino(opts);
+      espruino.pipe(process.stdout);
+
+      return command.handler.call(espruino, opts);
+    })
+    .catch(function (err) {
+      log.error(err);
+    })
+    .finally(function () {
+      espruino.unpipe(process.stdout);
+      espruino.close();
+    });
 };
 
 if (require.main === module) {

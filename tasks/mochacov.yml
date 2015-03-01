@@ -1,0 +1,4 @@
+options:
+  reporter: spec
+  require: ./test/fixture
+unit: ./test/unit/**/*.js

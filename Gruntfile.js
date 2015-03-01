@@ -14,7 +14,8 @@ module.exports = function gruntfile(grunt) {
     configPath: join(__dirname, 'tasks'),
     jitGrunt: {
       staticMappings: {
-        'devUpdate': 'grunt-dev-update'
+        devUpdate: 'grunt-dev-update',
+        mochacov: 'grunt-mocha-cov'
       }
     },
     data: {
